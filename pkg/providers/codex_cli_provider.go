@@ -199,10 +199,11 @@ func (p *CodexCliProvider) parseJSONLEvents(output string) (*LLMResponse, error)
 			}
 		case "turn.completed":
 			if event.Usage != nil {
+				promptTokens := event.Usage.InputTokens + event.Usage.CachedInputTokens
 				usage = &UsageInfo{
-					PromptTokens:     event.Usage.InputTokens,
+					PromptTokens:     promptTokens,
 					CompletionTokens: event.Usage.OutputTokens,
-					TotalTokens:      event.Usage.InputTokens + event.Usage.OutputTokens,
+					TotalTokens:      promptTokens + event.Usage.OutputTokens,
 				}
 			}
 		case "error":
@@ -220,10 +221,19 @@ func (p *CodexCliProvider) parseJSONLEvents(output string) (*LLMResponse, error)
 
 	content := strings.Join(contentParts, "\n")
 
+	// Extract tool calls from response text (same pattern as ClaudeCliProvider)
+	toolCalls := extractToolCallsFromText(content)
+
+	finishReason := "stop"
+	if len(toolCalls) > 0 {
+		finishReason = "tool_calls"
+		content = stripToolCallsFromText(content)
+	}
+
 	return &LLMResponse{
 		Content:      strings.TrimSpace(content),
-		ToolCalls:    nil,
-		FinishReason: "stop",
+		ToolCalls:    toolCalls,
+		FinishReason: finishReason,
 		Usage:        usage,
 	}, nil
 }

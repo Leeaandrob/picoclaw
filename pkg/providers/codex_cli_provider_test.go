@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -32,17 +33,83 @@ func TestParseJSONLEvents_AgentMessage(t *testing.T) {
 	if resp.Usage == nil {
 		t.Fatal("Usage should not be nil")
 	}
-	if resp.Usage.PromptTokens != 100 {
-		t.Errorf("PromptTokens = %d, want 100", resp.Usage.PromptTokens)
+	if resp.Usage.PromptTokens != 150 {
+		t.Errorf("PromptTokens = %d, want 150", resp.Usage.PromptTokens)
 	}
 	if resp.Usage.CompletionTokens != 20 {
 		t.Errorf("CompletionTokens = %d, want 20", resp.Usage.CompletionTokens)
 	}
-	if resp.Usage.TotalTokens != 120 {
-		t.Errorf("TotalTokens = %d, want 120", resp.Usage.TotalTokens)
+	if resp.Usage.TotalTokens != 170 {
+		t.Errorf("TotalTokens = %d, want 170", resp.Usage.TotalTokens)
 	}
 	if len(resp.ToolCalls) != 0 {
 		t.Errorf("ToolCalls should be empty, got %d", len(resp.ToolCalls))
+	}
+}
+
+func TestParseJSONLEvents_ToolCallExtraction(t *testing.T) {
+	p := &CodexCliProvider{}
+	toolCallText := `Let me read that file.
+{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"/tmp/test.txt\"}"}}]}`
+	// Build valid JSONL by marshaling the event
+	item := codexEvent{
+		Type: "item.completed",
+		Item: &codexEventItem{ID: "item_1", Type: "agent_message", Text: toolCallText},
+	}
+	itemJSON, _ := json.Marshal(item)
+	usageEvt := `{"type":"turn.completed","usage":{"input_tokens":50,"cached_input_tokens":0,"output_tokens":20}}`
+	events := `{"type":"turn.started"}` + "\n" + string(itemJSON) + "\n" + usageEvt
+
+	resp, err := p.parseJSONLEvents(events)
+	if err != nil {
+		t.Fatalf("parseJSONLEvents() error: %v", err)
+	}
+	if resp.FinishReason != "tool_calls" {
+		t.Errorf("FinishReason = %q, want %q", resp.FinishReason, "tool_calls")
+	}
+	if len(resp.ToolCalls) != 1 {
+		t.Fatalf("ToolCalls count = %d, want 1", len(resp.ToolCalls))
+	}
+	if resp.ToolCalls[0].Name != "read_file" {
+		t.Errorf("ToolCalls[0].Name = %q, want %q", resp.ToolCalls[0].Name, "read_file")
+	}
+	if resp.ToolCalls[0].ID != "call_1" {
+		t.Errorf("ToolCalls[0].ID = %q, want %q", resp.ToolCalls[0].ID, "call_1")
+	}
+	if resp.ToolCalls[0].Function.Arguments != `{"path":"/tmp/test.txt"}` {
+		t.Errorf("ToolCalls[0].Function.Arguments = %q", resp.ToolCalls[0].Function.Arguments)
+	}
+	// Content should have the tool call JSON stripped
+	if strings.Contains(resp.Content, "tool_calls") {
+		t.Errorf("Content should not contain tool_calls JSON, got: %q", resp.Content)
+	}
+}
+
+func TestParseJSONLEvents_MultipleToolCalls(t *testing.T) {
+	p := &CodexCliProvider{}
+	toolCallText := `{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"a.txt\"}"}},{"id":"call_2","type":"function","function":{"name":"write_file","arguments":"{\"path\":\"b.txt\",\"content\":\"hello\"}"}}]}`
+	item := codexEvent{
+		Type: "item.completed",
+		Item: &codexEventItem{ID: "item_1", Type: "agent_message", Text: toolCallText},
+	}
+	itemJSON, _ := json.Marshal(item)
+	events := `{"type":"turn.started"}` + "\n" + string(itemJSON) + "\n" + `{"type":"turn.completed"}`
+
+	resp, err := p.parseJSONLEvents(events)
+	if err != nil {
+		t.Fatalf("parseJSONLEvents() error: %v", err)
+	}
+	if len(resp.ToolCalls) != 2 {
+		t.Fatalf("ToolCalls count = %d, want 2", len(resp.ToolCalls))
+	}
+	if resp.ToolCalls[0].Name != "read_file" {
+		t.Errorf("ToolCalls[0].Name = %q, want %q", resp.ToolCalls[0].Name, "read_file")
+	}
+	if resp.ToolCalls[1].Name != "write_file" {
+		t.Errorf("ToolCalls[1].Name = %q, want %q", resp.ToolCalls[1].Name, "write_file")
+	}
+	if resp.FinishReason != "tool_calls" {
+		t.Errorf("FinishReason = %q, want %q", resp.FinishReason, "tool_calls")
 	}
 }
 
@@ -372,8 +439,8 @@ func TestCodexCliProvider_MockCLI_Success(t *testing.T) {
 	if resp.Usage == nil {
 		t.Fatal("Usage should not be nil")
 	}
-	if resp.Usage.PromptTokens != 50 {
-		t.Errorf("PromptTokens = %d, want 50", resp.Usage.PromptTokens)
+	if resp.Usage.PromptTokens != 60 {
+		t.Errorf("PromptTokens = %d, want 60", resp.Usage.PromptTokens)
 	}
 	if resp.Usage.CompletionTokens != 15 {
 		t.Errorf("CompletionTokens = %d, want 15", resp.Usage.CompletionTokens)
