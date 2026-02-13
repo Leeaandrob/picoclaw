@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -41,13 +42,40 @@ func (p *ClaudeCliProvider) Chat(ctx context.Context, messages []Message, tools 
 	if p.workspace != "" {
 		cmd.Dir = p.workspace
 	}
+
+	// Remove CLAUDECODE env var to allow nesting (Claude Code blocks
+	// subprocess launches when this variable is set).
+	env := os.Environ()
+	filtered := env[:0]
+	for _, e := range env {
+		if !strings.HasPrefix(e, "CLAUDECODE=") {
+			filtered = append(filtered, e)
+		}
+	}
+	cmd.Env = filtered
+
 	cmd.Stdin = bytes.NewReader([]byte(prompt))
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	if err := cmd.Run(); err != nil {
+	err := cmd.Run()
+
+	// Parse JSON from stdout even if exit code is non-zero,
+	// because claude writes diagnostic noise to stderr but still
+	// produces valid JSON output.
+	if stdoutStr := stdout.String(); stdoutStr != "" {
+		resp, parseErr := p.parseClaudeCliResponse(stdoutStr)
+		if parseErr == nil && resp != nil && resp.Content != "" {
+			return resp, nil
+		}
+	}
+
+	if err != nil {
+		if ctx.Err() == context.Canceled {
+			return nil, ctx.Err()
+		}
 		if stderrStr := stderr.String(); stderrStr != "" {
 			return nil, fmt.Errorf("claude cli error: %s", stderrStr)
 		}
