@@ -13,6 +13,7 @@ import (
 
 type ToolRegistry struct {
 	tools map[string]Tool
+	hooks []ToolHook
 	mu    sync.RWMutex
 }
 
@@ -20,6 +21,13 @@ func NewToolRegistry() *ToolRegistry {
 	return &ToolRegistry{
 		tools: make(map[string]Tool),
 	}
+}
+
+// AddHook registers a ToolHook to intercept tool execution.
+func (r *ToolRegistry) AddHook(hook ToolHook) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.hooks = append(r.hooks, hook)
 }
 
 func (r *ToolRegistry) Register(tool Tool) {
@@ -78,9 +86,30 @@ func (r *ToolRegistry) ExecuteWithContext(
 			})
 	}
 
+	// Run BeforeExecute hooks
+	var blocked bool
+	var blockResult *ToolResult
+	for _, hook := range r.hooks {
+		if err := hook.BeforeExecute(ctx, name, args); err != nil {
+			blocked = true
+			blockResult = ErrorResult(fmt.Sprintf("hook blocked execution: %v", err)).WithError(err)
+			break
+		}
+	}
+
+	var result *ToolResult
 	start := time.Now()
-	result := tool.Execute(ctx, args)
+	if blocked {
+		result = blockResult
+	} else {
+		result = tool.Execute(ctx, args)
+	}
 	duration := time.Since(start)
+
+	// Run AfterExecute hooks (always, even on block — for observability)
+	for _, hook := range r.hooks {
+		hook.AfterExecute(ctx, name, args, result)
+	}
 
 	// Log based on result type
 	if result.IsError {
@@ -173,6 +202,24 @@ func (r *ToolRegistry) List() []string {
 	defer r.mu.RUnlock()
 
 	return r.sortedToolNames()
+}
+
+// Remove unregisters a tool by name.
+func (r *ToolRegistry) Remove(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.tools, name)
+}
+
+// Clone returns a shallow copy of the registry.
+func (r *ToolRegistry) Clone() *ToolRegistry {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	clone := NewToolRegistry()
+	for name, tool := range r.tools {
+		clone.tools[name] = tool
+	}
+	return clone
 }
 
 // Count returns the number of registered tools.

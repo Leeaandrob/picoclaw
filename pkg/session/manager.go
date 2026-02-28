@@ -266,6 +266,33 @@ func (sm *SessionManager) loadSessions() error {
 }
 
 // SetHistory updates the messages of a session.
+// SessionInfo provides metadata about a session.
+type SessionInfo struct {
+	Key          string    `json:"key"`
+	MessageCount int       `json:"message_count"`
+	Created      time.Time `json:"created"`
+	Updated      time.Time `json:"updated"`
+	HasSummary   bool      `json:"has_summary"`
+}
+
+// ListSessions returns metadata about all active sessions.
+func (sm *SessionManager) ListSessions() []SessionInfo {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	infos := make([]SessionInfo, 0, len(sm.sessions))
+	for _, s := range sm.sessions {
+		infos = append(infos, SessionInfo{
+			Key:          s.Key,
+			MessageCount: len(s.Messages),
+			Created:      s.Created,
+			Updated:      s.Updated,
+			HasSummary:   s.Summary != "",
+		})
+	}
+	return infos
+}
+
 func (sm *SessionManager) SetHistory(key string, history []providers.Message) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
