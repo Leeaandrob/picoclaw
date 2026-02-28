@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -22,13 +23,19 @@ import (
 	"github.com/sipeed/picoclaw/pkg/channels"
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/constants"
+	"github.com/sipeed/picoclaw/pkg/cron"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/media"
+	"github.com/sipeed/picoclaw/pkg/memory"
+	"github.com/sipeed/picoclaw/pkg/pairing"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/routing"
+	"github.com/sipeed/picoclaw/pkg/session"
 	"github.com/sipeed/picoclaw/pkg/skills"
 	"github.com/sipeed/picoclaw/pkg/state"
 	"github.com/sipeed/picoclaw/pkg/tools"
+	"github.com/sipeed/picoclaw/pkg/tts"
+	"github.com/sipeed/picoclaw/pkg/usage"
 	"github.com/sipeed/picoclaw/pkg/utils"
 )
 
@@ -42,6 +49,7 @@ type AgentLoop struct {
 	fallback       *providers.FallbackChain
 	channelManager *channels.Manager
 	mediaStore     media.MediaStore
+	cronService    *cron.CronService
 }
 
 // processOptions configures how a message is processed
@@ -75,28 +83,115 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 		stateManager = state.NewManager(defaultAgent.Workspace)
 	}
 
-	return &AgentLoop{
+	// Create cron service
+	workspacePath := cfg.WorkspacePath()
+	cronStorePath := filepath.Join(workspacePath, "cron", "store.json")
+	os.MkdirAll(filepath.Dir(cronStorePath), 0o755)
+	cronService := cron.NewCronService(cronStorePath, nil) // handler wired in Run()
+
+	al := &AgentLoop{
 		bus:         msgBus,
 		cfg:         cfg,
 		registry:    registry,
 		state:       stateManager,
 		summarizing: sync.Map{},
 		fallback:    fallbackChain,
+		cronService: cronService,
 	}
+
+	// Register extended tools that need AgentLoop reference (cron)
+	registerExtendedTools(cfg, msgBus, registry, al)
+
+	return al
 }
 
-// registerSharedTools registers tools that are shared across all agents (web, message, spawn).
+// registerSharedTools registers tools that are shared across all agents (web, message, spawn, sessions, etc.).
 func registerSharedTools(
 	cfg *config.Config,
 	msgBus *bus.MessageBus,
 	registry *AgentRegistry,
 	provider providers.LLMProvider,
 ) {
+	workspacePath := cfg.WorkspacePath()
+	openAIKey := cfg.Providers.OpenAI.APIKey
+	geminiKey := cfg.Providers.Gemini.APIKey
+
+	// Shared managers (created once, shared across all agents)
+	approvalMgr := tools.NewApprovalManager()
+	autoReplyMgr := tools.NewAutoReplyManager()
+	usageTracker := usage.NewTracker(workspacePath)
+	pairingStore := pairing.NewStore(workspacePath)
+
+	// TTS manager (OpenAI + ElevenLabs)
+	var ttsProviders []tts.Provider
+	if openAIKey != "" {
+		if p := tts.NewOpenAITTS(openAIKey); p != nil {
+			ttsProviders = append(ttsProviders, p)
+		}
+	}
+	elevenLabsKey := os.Getenv("ELEVENLABS_API_KEY")
+	if elevenLabsKey != "" {
+		if p := tts.NewElevenLabsTTS(elevenLabsKey); p != nil {
+			ttsProviders = append(ttsProviders, p)
+		}
+	}
+	ttsOutputDir := filepath.Join(workspacePath, "tts")
+	os.MkdirAll(ttsOutputDir, 0o755)
+	ttsManager := tts.NewManager(ttsOutputDir, ttsProviders...)
+
+	// Memory embedding provider (prefer OpenAI, fallback to Gemini)
+	var embeddingProvider memory.EmbeddingProvider
+	if openAIKey != "" {
+		embeddingProvider = memory.NewOpenAIEmbedding(openAIKey)
+	} else if geminiKey != "" {
+		embeddingProvider = memory.NewGeminiEmbedding(geminiKey)
+	}
+
+	// Sessions tool deps (shared access to all agent sessions)
+	sessionsDeps := &tools.SessionsToolDeps{
+		GetSessions: func(agentID string) *session.SessionManager {
+			if a, ok := registry.GetAgent(agentID); ok {
+				return a.Sessions
+			}
+			return nil
+		},
+		CanAccess: func(currentAgentID, targetAgentID string) bool {
+			return registry.CanSpawnSubagent(currentAgentID, targetAgentID)
+		},
+		ListAgentIDs: func() []string {
+			return registry.ListAgentIDs()
+		},
+		Bus: msgBus,
+	}
+
+	// Agents list deps
+	agentsListDeps := &tools.AgentsListDeps{
+		ListAgentIDs: func() []string {
+			return registry.ListAgentIDs()
+		},
+		GetAgentInfo: func(agentID string) *tools.AgentInfo {
+			a, ok := registry.GetAgent(agentID)
+			if !ok {
+				return nil
+			}
+			return &tools.AgentInfo{
+				ID:        a.ID,
+				Model:     a.Model,
+				Workspace: a.Workspace,
+				Status:    "running",
+			}
+		},
+	}
+
+	// Loop detector hook (shared across agents)
+	loopDetector := tools.NewLoopDetector(tools.DefaultLoopDetectorConfig())
+
 	for _, agentID := range registry.ListAgentIDs() {
 		agent, ok := registry.GetAgent(agentID)
 		if !ok {
 			continue
 		}
+		currentAgentID := agentID
 
 		// Web tools
 		if searchTool := tools.NewWebSearchTool(tools.WebSearchToolOptions{
@@ -151,16 +246,120 @@ func registerSharedTools(
 		subagentManager := tools.NewSubagentManager(provider, agent.Model, agent.Workspace, msgBus)
 		subagentManager.SetLLMOptions(agent.MaxTokens, agent.Temperature)
 		spawnTool := tools.NewSpawnTool(subagentManager)
-		currentAgentID := agentID
 		spawnTool.SetAllowlistChecker(func(targetAgentID string) bool {
 			return registry.CanSpawnSubagent(currentAgentID, targetAgentID)
 		})
 		agent.Tools.Register(spawnTool)
+
+		// --- New tools ---
+
+		// Sessions tools (cross-agent communication)
+		agent.Tools.Register(tools.NewSessionsListTool(sessionsDeps, currentAgentID))
+		agent.Tools.Register(tools.NewSessionsHistoryTool(sessionsDeps, currentAgentID))
+		agent.Tools.Register(tools.NewSessionsSendTool(sessionsDeps, currentAgentID))
+
+		// Agents list
+		agent.Tools.Register(tools.NewAgentsListTool(agentsListDeps))
+
+		// Image generation (DALL-E 3, requires OpenAI key)
+		if imgTool := tools.NewImageGenTool(openAIKey); imgTool != nil {
+			agent.Tools.Register(imgTool)
+		}
+
+		// TTS (text-to-speech)
+		if ttsTool := tools.NewTTSTool(ttsManager); ttsTool != nil {
+			agent.Tools.Register(ttsTool)
+		}
+
+		// Per-agent memory (hybrid BM25 + vector search)
+		memDir := filepath.Join(workspacePath, "memory", currentAgentID)
+		os.MkdirAll(memDir, 0o755)
+		memIndex := memory.NewIndex(memDir, embeddingProvider)
+		if memTool := tools.NewMemoryTool(memIndex); memTool != nil {
+			agent.Tools.Register(memTool)
+		}
+
+		// Usage tracking
+		if usageTool := tools.NewUsageTool(usageTracker); usageTool != nil {
+			agent.Tools.Register(usageTool)
+		}
+
+		// Approval workflow
+		if approvalTool := tools.NewApprovalTool(approvalMgr); approvalTool != nil {
+			agent.Tools.Register(approvalTool)
+		}
+
+		// Auto-reply rules
+		if autoReplyTool := tools.NewAutoReplyTool(autoReplyMgr); autoReplyTool != nil {
+			agent.Tools.Register(autoReplyTool)
+		}
+
+		// Channel actions (pin, delete, react, etc.)
+		agent.Tools.Register(tools.NewChannelActionsTool())
+
+		// Device pairing
+		if pairingTool := tools.NewPairingTool(pairingStore); pairingTool != nil {
+			agent.Tools.Register(pairingTool)
+		}
+
+		// Loop detector hook (prevents infinite tool loops)
+		agent.Tools.AddHook(loopDetector)
+	}
+}
+
+// registerExtendedTools registers tools that need a reference to the AgentLoop (e.g., cron).
+func registerExtendedTools(
+	cfg *config.Config,
+	msgBus *bus.MessageBus,
+	registry *AgentRegistry,
+	al *AgentLoop,
+) {
+	workspacePath := cfg.WorkspacePath()
+	restrict := cfg.Agents.Defaults.RestrictToWorkspace
+	execTimeout := time.Duration(cfg.Tools.Cron.ExecTimeoutMinutes) * time.Minute
+
+	for _, agentID := range registry.ListAgentIDs() {
+		agent, ok := registry.GetAgent(agentID)
+		if !ok {
+			continue
+		}
+
+		// Cron tool (needs AgentLoop as JobExecutor)
+		cronTool, err := tools.NewCronTool(al.cronService, al, msgBus, workspacePath, restrict, execTimeout, cfg)
+		if err != nil {
+			logger.ErrorCF("agent", "Failed to create cron tool",
+				map[string]any{"agent": agentID, "error": err.Error()})
+			continue
+		}
+		agent.Tools.Register(cronTool)
 	}
 }
 
 func (al *AgentLoop) Run(ctx context.Context) error {
 	al.running.Store(true)
+
+	// Start cron service with job handler
+	if al.cronService != nil {
+		al.cronService.SetOnJob(func(job *cron.CronJob) (string, error) {
+			// Find the cron tool on the default agent to execute the job
+			defaultAgent := al.registry.GetDefaultAgent()
+			if defaultAgent == nil {
+				return "", fmt.Errorf("no default agent for cron execution")
+			}
+			if tool, ok := defaultAgent.Tools.Get("cron"); ok {
+				if cronTool, ok := tool.(*tools.CronTool); ok {
+					result := cronTool.ExecuteJob(ctx, job)
+					return result, nil
+				}
+			}
+			return "", fmt.Errorf("cron tool not available")
+		})
+		if err := al.cronService.Start(); err != nil {
+			logger.ErrorCF("agent", "Failed to start cron service",
+				map[string]any{"error": err.Error()})
+		}
+		defer al.cronService.Stop()
+	}
 
 	for al.running.Load() {
 		select {
@@ -928,20 +1127,15 @@ func (al *AgentLoop) runLLMIteration(
 
 // updateToolContexts updates the context for tools that need channel/chatID info.
 func (al *AgentLoop) updateToolContexts(agent *AgentInstance, channel, chatID string) {
-	// Use ContextualTool interface instead of type assertions
-	if tool, ok := agent.Tools.Get("message"); ok {
-		if mt, ok := tool.(tools.ContextualTool); ok {
-			mt.SetContext(channel, chatID)
-		}
+	contextualTools := []string{
+		"message", "spawn", "subagent",
+		"sessions_send", "cron", "channel_actions",
 	}
-	if tool, ok := agent.Tools.Get("spawn"); ok {
-		if st, ok := tool.(tools.ContextualTool); ok {
-			st.SetContext(channel, chatID)
-		}
-	}
-	if tool, ok := agent.Tools.Get("subagent"); ok {
-		if st, ok := tool.(tools.ContextualTool); ok {
-			st.SetContext(channel, chatID)
+	for _, name := range contextualTools {
+		if tool, ok := agent.Tools.Get(name); ok {
+			if ct, ok := tool.(tools.ContextualTool); ok {
+				ct.SetContext(channel, chatID)
+			}
 		}
 	}
 }
