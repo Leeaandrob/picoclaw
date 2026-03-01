@@ -1,116 +1,275 @@
+# PicoClaw Roadmap
 
-# 🦐 PicoClaw Roadmap
+> A lightweight, single-binary AI agent that runs anywhere — from cloud servers to Raspberry Pi Zero.
 
-> **Vision**: To build the ultimate lightweight, secure, and fully autonomous AI Agent infrastructure.automate the mundane, unleash your creativity
-
----
-
-## 🚀 1. Core Optimization: Extreme Lightweight
-
-*Our defining characteristic. We fight software bloat to ensure PicoClaw runs smoothly on the smallest embedded devices.*
-
-* [**Memory Footprint Reduction**](https://github.com/sipeed/picoclaw/issues/346) 
-  * **Goal**: Run smoothly on 64MB RAM embedded boards (e.g., low-end RISC-V SBCs) with the core process consuming < 20MB.
-  * **Context**: RAM is expensive and scarce on edge devices. Memory optimization takes precedence over storage size.
-  * **Action**: Analyze memory growth between releases, remove redundant dependencies, and optimize data structures.
-
-
-## 🛡️ 2. Security Hardening: Defense in Depth
-
-*Paying off early technical debt. We invite security experts to help build a "Secure-by-Default" agent.*
-
-* **Input Defense & Permission Control**
-  * **Prompt Injection Defense**: Harden JSON extraction logic to prevent LLM manipulation.
-  * **Tool Abuse Prevention**: Strict parameter validation to ensure generated commands stay within safe boundaries.
-  * **SSRF Protection**: Built-in blocklists for network tools to prevent accessing internal IPs (LAN/Metadata services).
-
-
-* **Sandboxing & Isolation**
-  * **Filesystem Sandbox**: Restrict file R/W operations to specific directories only.
-  * **Context Isolation**: Prevent data leakage between different user sessions or channels.
-  * **Privacy Redaction**: Auto-redact sensitive info (API Keys, PII) from logs and standard outputs.
-
-
-* **Authentication & Secrets**
-  * **Crypto Upgrade**: Adopt modern algorithms like `ChaCha20-Poly1305` for secret storage.
-  * **OAuth 2.0 Flow**: Deprecate hardcoded API keys in the CLI; move to secure OAuth flows.
-
-
-
-## 🔌 3. Connectivity: Protocol-First Architecture
-
-*Connect every model, reach every platform.*
-
-* **Provider**
-  * [**Architecture Upgrade**](https://github.com/sipeed/picoclaw/issues/283): Refactor from "Vendor-based" to "Protocol-based" classification (e.g., OpenAI-compatible, Ollama-compatible). *(Status: In progress by @Daming, ETA 5 days)*
-  * **Local Models**: Deep integration with **Ollama**, **vLLM**, **LM Studio**, and **Mistral** (local inference).
-  * **Online Models**: Continued support for frontier closed-source models.
-
-
-* **Channel**
-  * **IM Matrix**: QQ, WeChat (Work), DingTalk, Feishu (Lark), Telegram, Discord, WhatsApp, LINE, Slack, Email, KOOK, Signal, ...
-  * **Standards**: Support for the **OneBot** protocol.
-  * [**attachment**](https://github.com/sipeed/picoclaw/issues/348): Native handling of images, audio, and video attachments.
-
-
-* **Skill Marketplace**
-  * [**Discovery skills**](https://github.com/sipeed/picoclaw/issues/287): Implement `find_skill` to automatically discover and install skills from the [GitHub Skills Repo] or other registries.
-
-
-
-## 🧠 4. Advanced Capabilities: From Chatbot to Agentic AI
-
-*Beyond conversation—focusing on action and collaboration.*
-
-* **Operations**
-  * [**MCP Support**](https://github.com/sipeed/picoclaw/issues/290): Native support for the **Model Context Protocol (MCP)**.
-  * [**Browser Automation**](https://github.com/sipeed/picoclaw/issues/293): Headless browser control via CDP (Chrome DevTools Protocol) or ActionBook.
-  * [**Mobile Operation**](https://github.com/sipeed/picoclaw/issues/292): Android device control (similar to BotDrop).
-
-
-* **Multi-Agent Collaboration**
-  * [**Basic Multi-Agent**](https://github.com/sipeed/picoclaw/issues/294) implement
-  * [**Model Routing**](https://github.com/sipeed/picoclaw/issues/295): "Smart Routing" — dispatch simple tasks to small/local models (fast/cheap) and complex tasks to SOTA models (smart).
-  * [**Swarm Mode**](https://github.com/sipeed/picoclaw/issues/284): Collaboration between multiple PicoClaw instances on the same network.
-  * [**AIEOS**](https://github.com/sipeed/picoclaw/issues/296): Exploring AI-Native Operating System interaction paradigms.
-
-
-
-## 📚 5. Developer Experience (DevEx) & Documentation
-
-*Lowering the barrier to entry so anyone can deploy in minutes.*
-
-* [**QuickGuide (Zero-Config Start)**](https://github.com/sipeed/picoclaw/issues/350)
-  * Interactive CLI Wizard: If launched without config, automatically detect the environment and guide the user through Token/Network setup step-by-step.
-
-
-* **Comprehensive Documentation**
-  * **Platform Guides**: Dedicated guides for Windows, macOS, Linux, and Android.
-  * **Step-by-Step Tutorials**: "Babysitter-level" guides for configuring Providers and Channels.
-  * **AI-Assisted Docs**: Using AI to auto-generate API references and code comments (with human verification to prevent hallucinations).
-
-
-
-## 🤖 6. Engineering: AI-Powered Open Source
-
-*Born from Vibe Coding, we continue to use AI to accelerate development.*
-
-* **AI-Enhanced CI/CD**
-  * Integrate AI for automated Code Review, Linting, and PR Labeling.
-  * **Bot Noise Reduction**: Optimize bot interactions to keep PR timelines clean.
-  * **Issue Triage**: AI agents to analyze incoming issues and suggest preliminary fixes.
-
-
-
-## 🎨 7. Brand & Community
-
-* [**Logo Design**](https://github.com/sipeed/picoclaw/issues/297): We are looking for a **Mantis Shrimp (Stomatopoda)** logo design!
-  * *Concept*: Needs to reflect "Small but Mighty" and "Lightning Fast Strikes."
-
-
+This document outlines the development roadmap for PicoClaw as an independent project. Our goal is to build the most capable, deployable, and extensible personal AI agent in the Go ecosystem.
 
 ---
 
-### 🤝 Call for Contributions
+## Current State
 
-We welcome community contributions to any item on this roadmap! Please comment on the relevant Issue or submit a PR. Let's build the best Edge AI Agent together!
+PicoClaw ships as a single Go binary with zero runtime dependencies. Today it includes:
+
+- **27 tools** — file ops, shell, web search/fetch, messaging, image generation (DALL-E 3), TTS (OpenAI + ElevenLabs), per-agent memory (BM25 + vector search), cron scheduling, cross-agent sessions, device pairing, usage tracking, approval workflows, and more
+- **14 messaging channels** — Telegram, Discord, Slack, WhatsApp (native + bridge), Feishu, DingTalk, LINE, QQ, OneBot, WeCom, MaixCam, Pico WebSocket
+- **20+ LLM providers** — OpenAI, Anthropic, Gemini, Groq, DeepSeek, Ollama, OpenRouter, Mistral, Qwen, and others via OpenAI-compatible HTTP + dedicated Anthropic adapter + CLI providers (Claude Code, Codex)
+- **Multi-agent architecture** — agent registry, 7-level priority routing, spawn/subagent delegation, cross-agent session communication, model fallback chains with cooldown tracking
+- **Infrastructure** — loop detection hooks, cron service, heartbeat, device event monitoring, skills marketplace integration, context caching (Anthropic + OpenAI)
+
+---
+
+## Design Principles
+
+1. **Single binary, zero dependencies** — `scp picoclaw server:` and you're running
+2. **Runs anywhere** — x86, ARM, RISC-V, from cloud VMs to embedded hardware
+3. **MCP-native** — first-class Model Context Protocol support (not an afterthought)
+4. **Extend in any language** — MCP servers replace language-locked plugin SDKs
+5. **Minimal resource footprint** — ~20MB idle RAM, <100ms startup
+6. **Embeddable** — use PicoClaw as a Go library in your own projects
+
+---
+
+## Phase 1 — Foundation
+
+Core capabilities that unlock real-world usage.
+
+### Inbound Vision / Multimodal
+
+Complete the media pipeline so images sent via messaging channels reach the LLM as multimodal content.
+
+- [ ] Wire `InboundMessage.Media` files through to `ContentParts` on user messages
+- [ ] Base64 encoding with MIME detection for HTTP providers (OpenAI/Gemini format)
+- [ ] Anthropic-native image blocks (`NewImageBlockBase64`)
+- [ ] Telegram photo/document lifecycle (stop premature cleanup)
+- [ ] CLI provider fallback (save image, reference path in prompt text)
+
+### MCP Server
+
+Expose PicoClaw's tools and agent capabilities via the Model Context Protocol.
+
+- [ ] stdio transport (for IDE integrations — VS Code, Cursor, Claude Code)
+- [ ] HTTP+SSE transport (for network clients)
+- [ ] All registered tools exposed as MCP tools
+- [ ] Agent sessions exposed as MCP resources
+- [ ] Prompt templates for common workflows
+
+### MCP Client
+
+Consume external MCP servers to extend PicoClaw's capabilities without writing Go code.
+
+- [ ] stdio transport (launch local MCP server processes)
+- [ ] HTTP+SSE transport (connect to remote MCP servers)
+- [ ] Dynamic tool discovery and registration
+- [ ] Per-agent MCP server configuration
+- [ ] Graceful lifecycle management (start/stop/restart)
+
+### Quick Wins
+
+- [ ] Wire `EnrichMessageWithLinks` into the message processing pipeline
+- [ ] Register `BlackboardTool` and `HandoffTool` from the multiagent package
+- [ ] Wire auth rotation into the provider factory (round-robin multi-key with cooldown)
+- [ ] Add Edge TTS provider (free, no API key required)
+
+---
+
+## Phase 2 — Differentiation
+
+Features that set PicoClaw apart through Go's strengths.
+
+### Browser Automation (CDP Native)
+
+Direct Chrome DevTools Protocol integration — no Playwright, no Node.js, no external dependencies.
+
+- [ ] CDP WebSocket client in pure Go
+- [ ] Core actions: navigate, click, type, screenshot, evaluate JS
+- [ ] AI-optimized page snapshots (accessibility tree extraction)
+- [ ] Tab management and multi-profile support
+- [ ] Optional Chrome Extension relay for user's live tabs
+
+### Speech-to-Text
+
+Multi-provider STT so voice messages from Telegram/WhatsApp/Discord are transcribed and understood.
+
+- [ ] OpenAI Whisper API
+- [ ] Groq Whisper (fast, free tier)
+- [ ] Deepgram
+- [ ] Provider fallback chain (reuse existing `FallbackChain` pattern)
+
+### Memory Upgrade
+
+Migrate from JSON-file persistence to SQLite for production-grade memory.
+
+- [ ] SQLite storage via `modernc.org/sqlite` (pure Go, no CGO)
+- [ ] sqlite-vec for vector similarity search
+- [ ] FTS5 full-text search (replaces custom BM25)
+- [ ] MMR (Maximal Marginal Relevance) for result diversity
+- [ ] Temporal decay scoring
+- [ ] Session transcript indexing with incremental delta sync
+
+### Subagent Management
+
+Full lifecycle control for spawned subagents.
+
+- [ ] `subagents` tool: list, kill, steer running subagents
+- [ ] Depth limits to prevent infinite recursion
+- [ ] Thread-binding (subagent replies go to specific channel thread)
+- [ ] Timeout and cleanup policies
+
+### Security Hardening
+
+- [ ] SSRF protection on `web_fetch` (block internal IP ranges)
+- [ ] Docker sandbox for `exec` tool (optional, opt-in)
+- [ ] Audit logging for tool executions
+- [ ] Workspace-only file access guards (configurable per agent)
+
+---
+
+## Phase 3 — Surpass
+
+Capabilities that go beyond what existing AI agent platforms offer.
+
+### MCP Hub
+
+PicoClaw as a universal MCP bridge — expose all tools via MCP while consuming external MCP servers.
+
+- [ ] Bidirectional MCP: server + client simultaneously
+- [ ] Tool namespace management (avoid collisions between MCP sources)
+- [ ] MCP server health monitoring and auto-reconnect
+- [ ] Config-driven MCP server declarations
+
+### Plugin Architecture via MCP
+
+Replace traditional language-locked plugin SDKs with MCP servers in any language.
+
+- [ ] Python MCP servers for data science tools
+- [ ] JavaScript/TypeScript MCP servers for web tooling
+- [ ] Rust MCP servers for performance-critical operations
+- [ ] Plugin marketplace discovery and installation
+
+### WebAssembly Plugin Runtime
+
+Sandboxed, polyglot tool execution via Wasm.
+
+- [ ] [wazero](https://github.com/tetragonix/wazero) integration (pure Go Wasm runtime, zero CGO)
+- [ ] WASI support for filesystem and network access
+- [ ] Tool hot-loading without agent restart
+- [ ] Resource limits (memory, CPU time) per plugin
+
+### Streaming Voice Pipeline
+
+Real-time STT to Agent to TTS pipeline leveraging Go's concurrency model.
+
+- [ ] Goroutine-based audio pipeline (parallel STT + LLM + TTS)
+- [ ] WebSocket audio streaming for web clients
+- [ ] VAD (Voice Activity Detection) for natural turn-taking
+- [ ] Telephony integration (SIP/WebRTC)
+
+### Embedded Mode
+
+Use PicoClaw as a Go library — import it into your own applications.
+
+- [ ] Clean public API surface (`picoclaw.New()`, `agent.Chat()`, `tools.Register()`)
+- [ ] No global state, fully injectable dependencies
+- [ ] Example: embed PicoClaw in a Go web server
+- [ ] Example: embed PicoClaw in a CLI tool
+
+### Observability
+
+Production-grade monitoring and metrics.
+
+- [ ] Prometheus metrics endpoint (`/metrics`)
+- [ ] OpenTelemetry traces for tool executions and LLM calls
+- [ ] Structured JSON logging (already partially implemented)
+- [ ] Health check endpoints with dependency status
+
+---
+
+## Phase 4 — Ecosystem
+
+Building the community and platform around PicoClaw.
+
+### Web Dashboard
+
+Server-rendered admin panel using Go-native templating — no JavaScript build step.
+
+- [ ] [templ](https://github.com/a-h/templ) + htmx for reactive UI without JS framework
+- [ ] Agent configuration and status monitoring
+- [ ] Session browser with message history
+- [ ] Tool execution logs and metrics
+- [ ] Channel connection status and management
+
+### Terminal UI
+
+Premium CLI experience with real-time tool streaming.
+
+- [ ] [bubbletea](https://github.com/charmbracelet/bubbletea) based TUI
+- [ ] Live tool call visualization
+- [ ] Multi-agent session switching
+- [ ] Inline image rendering (iTerm2/Kitty protocols)
+
+### Additional Channels
+
+Expand messaging platform coverage.
+
+- [ ] Matrix (E2E encrypted)
+- [ ] Microsoft Teams
+- [ ] Google Chat
+- [ ] Nostr (decentralized)
+- [ ] IRC
+- [ ] Mattermost
+- [ ] Twitch
+- [ ] Generic webhook channel (receive any HTTP POST as inbound message)
+
+### Multi-Node Mesh
+
+Distributed agent network across multiple machines.
+
+- [ ] mDNS auto-discovery on local network
+- [ ] WireGuard tunnel for remote nodes
+- [ ] Node capabilities: camera, screen, location, notifications
+- [ ] Companion protocol for iOS/Android apps
+- [ ] Task delegation across nodes based on capabilities
+
+### ACP (Agent Control Protocol)
+
+Interoperability with Claude Code, Codex, and other ACP-compatible agents.
+
+- [ ] ACP server implementation
+- [ ] Spawn ACP sessions as subagents
+- [ ] Persistent ACP session management
+
+---
+
+## Why PicoClaw?
+
+| | PicoClaw | Typical AI Agent (Node.js) |
+|---|---|---|
+| **Binary** | Single file, ~30MB | node_modules, 500MB+ |
+| **RAM (idle)** | ~20MB | ~150MB+ |
+| **Startup** | <100ms | 3-5s |
+| **Deploy** | `scp` + run | npm install, configure, PM2 |
+| **Platforms** | Linux, macOS, Windows, ARM, RISC-V | Linux, macOS (x86/ARM) |
+| **Edge/Embedded** | Raspberry Pi Zero, routers, NAS | Not practical |
+| **Extensions** | MCP (any language) | npm packages (JS/TS only) |
+| **Embedding** | `import "picoclaw"` | Not embeddable |
+
+---
+
+## Contributing
+
+We welcome contributions at any phase of the roadmap. If you're interested in working on a specific item:
+
+1. Open an issue to discuss the approach
+2. Reference this roadmap in your PR description
+3. Follow existing patterns in the codebase (see `pkg/tools/` for tool examples, `pkg/channels/` for channel examples)
+
+Priority areas where help is most needed:
+
+- **MCP implementation** (Phase 1) — the highest-impact differentiator
+- **Browser CDP** (Phase 2) — pure Go CDP client
+- **New channels** (Phase 4) — each channel is relatively self-contained
+- **Testing** — improving coverage across all packages
+
+---
+
+*This roadmap is a living document. Priorities may shift based on community feedback and real-world usage.*
