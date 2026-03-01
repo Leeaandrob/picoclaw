@@ -41,7 +41,6 @@ func TestClassifyError_StatusCodes(t *testing.T) {
 		{402, FailoverBilling},
 		{408, FailoverTimeout},
 		{429, FailoverRateLimit},
-		{400, FailoverFormat},
 		{500, FailoverTimeout},
 		{502, FailoverTimeout},
 		{503, FailoverTimeout},
@@ -235,8 +234,35 @@ func TestClassifyError_ImageSizeError(t *testing.T) {
 func TestClassifyError_UnknownError(t *testing.T) {
 	err := errors.New("some completely random error")
 	result := ClassifyError(err, "openai", "gpt-4")
-	if result != nil {
-		t.Errorf("expected nil for unknown error, got %+v", result)
+	if result == nil {
+		t.Fatal("expected non-nil for unknown error (should default to FailoverUnknown)")
+	}
+	if result.Reason != FailoverUnknown {
+		t.Errorf("reason = %q, want unknown", result.Reason)
+	}
+	if !result.IsRetriable() {
+		t.Error("unknown errors should be retriable")
+	}
+}
+
+func TestClassifyError_ProviderErrorPatterns(t *testing.T) {
+	patterns := []string{
+		"The 'claude-code' model is not supported when using Codex",
+		"model not found: gpt-5-turbo",
+		"model not available in this region",
+		"the requested model does not exist",
+	}
+
+	for _, msg := range patterns {
+		err := errors.New(msg)
+		result := ClassifyError(err, "codex-cli", "claude-code")
+		if result == nil {
+			t.Errorf("pattern %q: expected non-nil", msg)
+			continue
+		}
+		if !result.IsRetriable() {
+			t.Errorf("pattern %q: should be retriable for fallback", msg)
+		}
 	}
 }
 
@@ -306,6 +332,7 @@ func TestExtractHTTPStatus(t *testing.T) {
 		{"status: 429 rate limited", 429},
 		{"status 401 unauthorized", 401},
 		{"HTTP/1.1 502 Bad Gateway", 502},
+		{"http/1.1 502 bad gateway", 502},
 		{"no status code here", 0},
 		{"random number 12345", 0},
 	}

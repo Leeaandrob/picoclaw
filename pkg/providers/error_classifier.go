@@ -86,6 +86,14 @@ var (
 		rxp(`image exceeds.*mb`),
 	}
 
+	// Provider/model errors (model not available, not supported, etc.)
+	providerErrorPatterns = []errorPattern{
+		substr("not supported"),
+		substr("model not found"),
+		substr("model not available"),
+		substr("does not exist"),
+	}
+
 	// Transient HTTP status codes that map to timeout (server-side failures).
 	transientStatusCodes = map[int]bool{
 		500: true, 502: true, 503: true,
@@ -95,7 +103,7 @@ var (
 )
 
 // ClassifyError classifies an error into a FailoverError with reason.
-// Returns nil if the error is not classifiable (unknown errors should not trigger fallback).
+// Unknown errors default to FailoverUnknown (retriable) so the fallback chain continues.
 func ClassifyError(err error, provider, model string) *FailoverError {
 	if err == nil {
 		return nil
@@ -151,7 +159,13 @@ func ClassifyError(err error, provider, model string) *FailoverError {
 		}
 	}
 
-	return nil
+	// Unknown errors: default to retriable so fallback chain continues.
+	return &FailoverError{
+		Reason:   FailoverUnknown,
+		Provider: provider,
+		Model:    model,
+		Wrapped:  err,
+	}
 }
 
 // classifyByStatus maps HTTP status codes to FailoverReason.
@@ -165,8 +179,6 @@ func classifyByStatus(status int) FailoverReason {
 		return FailoverTimeout
 	case status == 429:
 		return FailoverRateLimit
-	case status == 400:
-		return FailoverFormat
 	case transientStatusCodes[status]:
 		return FailoverTimeout
 	}
@@ -194,6 +206,9 @@ func classifyByMessage(msg string) FailoverReason {
 	if matchesAny(msg, formatPatterns) {
 		return FailoverFormat
 	}
+	if matchesAny(msg, providerErrorPatterns) {
+		return FailoverUnknown
+	}
 	return ""
 }
 
@@ -203,7 +218,7 @@ func extractHTTPStatus(msg string) int {
 	// Common patterns in Go HTTP error messages
 	patterns := []*regexp.Regexp{
 		regexp.MustCompile(`status[:\s]+(\d{3})`),
-		regexp.MustCompile(`HTTP[/\s]+\d*\.?\d*\s+(\d{3})`),
+		regexp.MustCompile(`(?i)http[/\s]+\d*\.?\d*\s+(\d{3})`),
 	}
 
 	for _, p := range patterns {
